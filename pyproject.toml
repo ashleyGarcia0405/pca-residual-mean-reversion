@@ -1,0 +1,29 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "pca_residual_mean_reversion"
+version = "0.0.1"
+description = "PCA residual mean reversion strategy implementation."
+authors = [
+  { name = "Ashley Garcia" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+
+[tool.ruff]
+line-length = 99
+src = ["pca_residual_mean_reversion"]
+include = ["pyproject.toml", "pca_residual_mean_reversion/**/*.py"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pca_residual_mean_reversion"]
+force-sort-within-sections = true
