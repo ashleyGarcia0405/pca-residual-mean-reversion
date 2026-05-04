@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pickle
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -14,14 +15,24 @@ from pca_residual_mean_reversion.config import PROCESSED_DATA_DIR
 
 app = typer.Typer(add_completion=False)
 
-
-def output_suffix(L: int, K: int, M: int) -> str:
-    return f"_L{L}_K{K}_M{M}"
+Align = Literal["forward", "actual"]
 
 
-def rolling_pca_residuals(returns: pd.DataFrame, L: int, k: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray | None, dict]:
+def output_suffix(L: int, K: int, M: int, align: Align = "forward") -> str:
+    return f"_L{L}_K{K}_M{M}" + ("_t0" if align == "actual" else "")
+
+
+def rolling_pca_residuals(
+    returns: pd.DataFrame,
+    L: int,
+    k: int,
+    align: Align = "forward",
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, np.ndarray | None, dict]:
     T, N = returns.shape
-    dates = returns.index[L:]
+    if align == "actual":
+        dates = returns.index[L - 1 : T - 1]
+    else:
+        dates = returns.index[L:]
     tickers = returns.columns
 
     resid_rows = np.full((T - L, N), np.nan)
@@ -33,7 +44,7 @@ def rolling_pca_residuals(returns: pd.DataFrame, L: int, k: int) -> tuple[pd.Dat
     R_vals = returns.values
     pc_cols = [f"PC{j + 1}" for j in range(k)]
 
-    for i, t in enumerate(tqdm(range(L, T), desc=f"L={L}, k={k}")):
+    for i, t in enumerate(tqdm(range(L, T), desc=f"L={L}, k={k}, align={align}")):
         window = R_vals[t - L : t].copy()
 
         mu = window.mean(axis=0)
@@ -56,7 +67,7 @@ def rolling_pca_residuals(returns: pd.DataFrame, L: int, k: int) -> tuple[pd.Dat
         evr_rows[i] = pca.explained_variance_ratio_
         factor_rows[i] = F[-1]
 
-        signal_date = returns.index[t]
+        signal_date = returns.index[t - 1] if align == "actual" else returns.index[t]
         rolling_loadings[signal_date] = pd.DataFrame(
             pca.components_.T,
             index=tickers,
@@ -104,8 +115,9 @@ def save_spec_artifacts(
     K: int,
     M: int,
     processed_dir: Path = PROCESSED_DATA_DIR,
+    align: Align = "forward",
 ) -> dict[str, Path]:
-    suffix = output_suffix(L, K, M)
+    suffix = output_suffix(L, K, M, align=align)
     outputs = {
         "residuals": processed_dir / f"residual_returns{suffix}.parquet",
         "zscores": processed_dir / f"residual_zscores{suffix}.parquet",
@@ -114,6 +126,10 @@ def save_spec_artifacts(
         "final_loadings": processed_dir / f"pca_loadings_final{suffix}.pkl",
         "rolling_loadings": processed_dir / f"pca_rolling_loadings{suffix}.pkl",
     }
+
+    timing_label = (
+        "indexed_by_actual_residual_date" if align == "actual" else "indexed_by_first_tradable_date"
+    )
 
     residuals.to_parquet(outputs["residuals"])
     zscores.to_parquet(outputs["zscores"])
@@ -130,7 +146,7 @@ def save_spec_artifacts(
                 "components": [f"PC{j + 1}" for j in range(K)],
                 "tickers": list(residuals.columns),
                 "date": str(residuals.index[-1].date()),
-                "timing_convention": "indexed_by_first_tradable_date",
+                "timing_convention": timing_label,
             },
             fh,
         )
@@ -142,7 +158,7 @@ def save_spec_artifacts(
                 "k": K,
                 "M": M,
                 "loadings_by_date": rolling_loadings,
-                "timing_convention": "indexed_by_first_tradable_date",
+                "timing_convention": timing_label,
             },
             fh,
         )
@@ -156,11 +172,13 @@ def save_spec_outputs(
     K: int,
     M: int,
     processed_dir: Path = PROCESSED_DATA_DIR,
+    align: Align = "forward",
 ) -> dict[str, Path]:
     residuals, evr, factor_returns, loadings_last, rolling_loadings = rolling_pca_residuals(
         log_returns,
         L=L,
         k=K,
+        align=align,
     )
     zscores = compute_zscores(residuals, M=M)
     return save_spec_artifacts(
@@ -174,6 +192,7 @@ def save_spec_outputs(
         K=K,
         M=M,
         processed_dir=processed_dir,
+        align=align,
     )
 
 
@@ -182,16 +201,21 @@ def generate_spec(
     L: int = typer.Option(..., help="PCA estimation window"),
     K: int = typer.Option(..., help="Number of PCA factors"),
     M: int = typer.Option(..., help="Residual z-score lookback"),
+    align: str = typer.Option(
+        "forward",
+        help="forward = legacy (residual labeled at next date); "
+        "actual = corrected (residual labeled at its actual date, suffix _t0)",
+    ),
 ) -> None:
     log_returns = load_clean_log_returns()
-    outputs = save_spec_outputs(log_returns, L=L, K=K, M=M)
-    logger.success(f"Saved spec {output_suffix(L, K, M)}")
+    outputs = save_spec_outputs(log_returns, L=L, K=K, M=M, align=align)
+    logger.success(f"Saved spec {output_suffix(L, K, M, align=align)}")
     for path in outputs.values():
         logger.info(path)
 
 
 @app.command()
-def generate_reduced_grid() -> None:
+def generate_reduced_grid(align: str = typer.Option("forward", help="forward or actual")) -> None:
     log_returns = load_clean_log_returns()
     L_grid = [63, 126, 252]
     K_grid = [5, 10, 15]
@@ -200,8 +224,8 @@ def generate_reduced_grid() -> None:
     for L in L_grid:
         for K in K_grid:
             for M in M_grid:
-                logger.info(f"Generating {output_suffix(L, K, M)}")
-                save_spec_outputs(log_returns, L=L, K=K, M=M)
+                logger.info(f"Generating {output_suffix(L, K, M, align=align)}")
+                save_spec_outputs(log_returns, L=L, K=K, M=M, align=align)
 
     logger.success("Reduced robustness grid generated.")
 

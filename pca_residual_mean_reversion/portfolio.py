@@ -107,6 +107,61 @@ def build_cross_sectional_reversal(
     return build_weights_equal(signal, c=c, G=G, w_max=w_max)
 
 
+def build_weights_quantile(
+    zscores: pd.DataFrame,
+    q: float = 0.10,
+    G: float = 1.0,
+    invert: bool = False,
+) -> pd.DataFrame:
+    sig = -zscores if not invert else zscores
+    n = sig.notna().sum(axis=1)
+    k_each = (n * q).clip(lower=1).astype(int)
+    rank_asc = sig.rank(axis=1, method="first")
+    rank_desc = sig.rank(axis=1, method="first", ascending=False)
+    long_mask = rank_asc.le(k_each, axis=0).astype(float)
+    short_mask = rank_desc.le(k_each, axis=0).astype(float)
+    w = long_mask.div(long_mask.sum(axis=1).clip(lower=1), axis=0) * (G / 2)
+    w = w - short_mask.div(short_mask.sum(axis=1).clip(lower=1), axis=0) * (G / 2)
+    return w.fillna(0.0)
+
+
+def build_weights_sparse_composite(
+    zscores: pd.DataFrame,
+    k_rev: int = 10,
+    k_cont: int = 3,
+    G: float = 1.0,
+) -> pd.DataFrame:
+    return build_weights_asymmetric_composite(
+        zscores,
+        k_rev_long=k_rev,
+        k_rev_short=k_rev,
+        k_cont_long=k_cont,
+        k_cont_short=k_cont,
+        G=G,
+    )
+
+
+def build_weights_asymmetric_composite(
+    zscores: pd.DataFrame,
+    k_rev_long: int = 6,
+    k_rev_short: int = 14,
+    k_cont_long: int = 2,
+    k_cont_short: int = 2,
+    G: float = 1.0,
+) -> pd.DataFrame:
+    rank_lo = zscores.rank(axis=1, method="first")
+    rank_hi = zscores.rank(axis=1, method="first", ascending=False)
+    rev_long = rank_lo.le(k_rev_long, axis=0).astype(float)
+    rev_short = rank_hi.le(k_rev_short, axis=0).astype(float)
+    cont_long = rank_hi.le(k_cont_long, axis=0).astype(float)
+    cont_short = rank_lo.le(k_cont_short, axis=0).astype(float)
+    long_combined = (rev_long - cont_short).clip(lower=0) + cont_long
+    short_combined = (rev_short - cont_long).clip(lower=0) + cont_short
+    w = long_combined.div(long_combined.sum(axis=1).clip(lower=1), axis=0) * (G / 2)
+    w = w - short_combined.div(short_combined.sum(axis=1).clip(lower=1), axis=0) * (G / 2)
+    return w.fillna(0.0)
+
+
 def neutralize_single_day_weights_safe(
     w_row: pd.Series,
     B_t: pd.DataFrame,
