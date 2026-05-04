@@ -1,0 +1,28 @@
+{
+  "id": "hA3_6_14_2_2_50_75",
+  "ts": "2026-05-04T10:50:29.403154+00:00",
+  "phase": "H",
+  "family": "asym3",
+  "pca_suffix": "_L126_K10_M20_t0",
+  "params": {
+    "kr_l": 6,
+    "kr_s": 14,
+    "kc_l": 2,
+    "kc_s": 2,
+    "smooth_alpha": 0.05,
+    "band": 0.0075
+  },
+  "notes": "asym rl=6 rs=14 cl=2 cs=2 a=0.05 b=0.75bp",
+  "status": "ok",
+  "sharpe_gross": 1.162,
+  "sharpe_net_1bps": 1.107,
+  "sharpe_net_3bps": 0.999,
+  "sharpe_net_5bps": 0.891,
+  "ann_ret_gross": 0.0479,
+  "ann_ret_net_3bps": 0.0412,
+  "ann_ret_net_5bps": 0.0367,
+  "turnover": 0.085,
+  "max_dd_net_5bps": -0.0728,
+  "hit_rate_net_5bps": 0.5369,
+  "n_days": 3608
+}
