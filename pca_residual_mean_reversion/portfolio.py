@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy.stats import t as student_t
 
 
 def _renormalize_gross(weights: pd.DataFrame | pd.Series, gross_target: float) -> pd.DataFrame | pd.Series:
@@ -105,6 +106,63 @@ def build_cross_sectional_reversal(
     signal = signal.sub(signal.mean(axis=1), axis=0)
     signal = signal.div(signal.std(axis=1).replace(0, np.nan), axis=0)
     return build_weights_equal(signal, c=c, G=G, w_max=w_max)
+
+
+def rolling_ar1_screen(
+    residuals: pd.DataFrame,
+    lookback: int = 252,
+    min_obs: int = 60,
+    pvalue_max: float = 0.10,
+) -> dict[str, pd.DataFrame]:
+    x = residuals.shift(1)
+    y = residuals.copy()
+    valid = x.notna() & y.notna()
+
+    x_valid = x.where(valid)
+    y_valid = y.where(valid)
+
+    n = valid.rolling(lookback, min_periods=min_obs).sum()
+    sum_x = x_valid.rolling(lookback, min_periods=min_obs).sum()
+    sum_y = y_valid.rolling(lookback, min_periods=min_obs).sum()
+    sum_xx = (x_valid * x_valid).rolling(lookback, min_periods=min_obs).sum()
+    sum_yy = (y_valid * y_valid).rolling(lookback, min_periods=min_obs).sum()
+    sum_xy = (x_valid * y_valid).rolling(lookback, min_periods=min_obs).sum()
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sxx = sum_xx - (sum_x * sum_x) / n
+        syy = sum_yy - (sum_y * sum_y) / n
+        sxy = sum_xy - (sum_x * sum_y) / n
+
+        phi = sxy / sxx
+        sse = syy - phi * sxy
+        sigma2 = sse / (n - 2)
+        se_phi = np.sqrt(sigma2 / sxx)
+        tstat = phi / se_phi
+
+    df = (n - 2).clip(lower=1)
+    pvalue = pd.DataFrame(
+        2 * student_t.sf(np.abs(tstat.to_numpy()), df.to_numpy()),
+        index=tstat.index,
+        columns=tstat.columns,
+    )
+
+    phi = phi.where((n >= min_obs) & (sxx > 0) & np.isfinite(phi))
+    tstat = tstat.where(phi.notna() & np.isfinite(tstat))
+    pvalue = pvalue.where(phi.notna() & np.isfinite(pvalue))
+    eligible = (phi < 0) & (pvalue < pvalue_max)
+
+    return {
+        "phi": phi,
+        "tstat": tstat,
+        "pvalue": pvalue,
+        "eligible": eligible,
+        "obs": n,
+    }
+
+
+def apply_universe_screen(signal_frame: pd.DataFrame, eligible_mask: pd.DataFrame) -> pd.DataFrame:
+    aligned_mask = eligible_mask.reindex(index=signal_frame.index, columns=signal_frame.columns).fillna(False)
+    return signal_frame.where(aligned_mask)
 
 
 def neutralize_single_day_weights_safe(
